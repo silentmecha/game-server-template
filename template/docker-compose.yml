@@ -1,0 +1,24 @@
+version: "3.4"
+services:
+  server:
+#    command: bash
+    build: .
+    image: silentmecha/{{GAME_SERVER_IMAGE_NAME}}:latest
+    restart: unless-stopped
+    ports:
+      - <<EXPOSE_ALL_PORTS>>
+    env_file: .env
+    stdin_open: true
+    tty: true
+    volumes:
+      - <<DEFINE_ALL_VOLUMES>>
+  sftp:
+    image: atmoz/sftp
+    restart: unless-stopped
+    volumes:
+      - saved:/home/${SFT_USER}/saved
+    ports:
+      - "${SFT_PORT}:22"
+    command: ${SFT_USER}:${SFT_PASS}:::saved
+volumes:
+  saved:
