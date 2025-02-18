@@ -4,6 +4,7 @@
 app_id=""
 image_base=""
 current_dir=$(pwd)
+update_dir=""
 
 # Function to display help
 show_help() {
@@ -12,14 +13,16 @@ show_help() {
     echo "Options:"
     echo "  -i  Specify the Steam app ID"
     echo "  -b  Override the image base (optional)"
+    echo "  -u  Update existing image to new guidelines (optional)"
     echo "  -h  Show this help message"
 }
 
 # Parse command-line options
-while getopts "i:b:h" opt; do
+while getopts "i:b:u:h" opt; do
     case ${opt} in
     i ) app_id=$OPTARG ;;
     b ) image_base=$OPTARG ;;
+    u ) update_dir=$OPTARG ;;
     h )
         show_help
         exit 0
@@ -89,10 +92,18 @@ function check_linux_depot() {
 
 function define_variables() {
     local game_server_info=$(curl -s -X GET "https://api.steamcmd.net/v1/info/$app_id" | jq .)
-    local parent_app_id=$(echo $game_server_info | jq -r '.. | select(type == "object" and has("parent")) | .parent')
+    local parent_app_id=$(echo $game_server_info | jq -r '.data | to_entries | .[].value.common.parent')
     local server_parent_info=$(curl -s -X GET "https://api.steamcmd.net/v1/info/$parent_app_id" | jq .)
     # Set game name from $server_parent_info
     GAME_NAME=$(echo $server_parent_info | jq -r '.data | to_entries | .[].value.common.name')
+    if [ -z "$GAME_NAME" ] || [ "$GAME_NAME" == "null" ]; then
+        local game_server_info_steamapi=$(curl -s -X GET https://store.steampowered.com/api/appdetails?appids=$parent_app_id | jq .)
+        GAME_NAME=$(echo $game_server_info_steamapi | jq -r ".\"$parent_app_id\".data.name")
+        if [ -z "$GAME_NAME" ] || [ "$GAME_NAME" == "null" ]; then
+            echo "Game name could not be found. Please check the Steam app ID."
+            exit 1
+        fi
+    fi
     # Set game name in PascalCase
     GAME_NAME_PASCAL_CASE=$(convert_to_pascal_case "$GAME_NAME")
     # Set game server image name in kebab-case
@@ -103,15 +114,13 @@ function define_variables() {
     else
         IMAGE_BASE=$image_base
     fi
+    echo "Game name: $GAME_NAME"
+    echo "Game server image name: $GAME_SERVER_IMAGE_NAME"
+    echo "Image base: $IMAGE_BASE"
+    echo "Game Install DIR: $GAME_NAME_PASCAL_CASE"
 }
 
-function create_server_image_directory() {
-    mkdir -p "$current_dir/../$GAME_SERVER_IMAGE_NAME"
-    # Copy files from template directory and replace variables, including `.` files
-    cp -r "$current_dir/template/"* "$current_dir/../$GAME_SERVER_IMAGE_NAME"
-    cp -r "$current_dir/template/."* "$current_dir/../$GAME_SERVER_IMAGE_NAME"
-
-    # Replace variables in files
+function replace_placeholders() {
     # List of files to replace variables
     local files_to_replace="Dockerfile docker-compose.yml base.Dockerfile README.md"
 
@@ -125,10 +134,32 @@ function create_server_image_directory() {
     done
 }
 
+function update_existing_server_image_directory() {
+    local source_dir="$current_dir/../$update_dir"
+    local destination_dir="$current_dir/../$GAME_SERVER_IMAGE_NAME"
+
+    if [ "$source_dir" != "$destination_dir" ]; then
+        cp -r "$source_dir" "$destination_dir"
+    fi
+    replace_placeholders
+}
+
+function create_server_image_directory() {
+    mkdir -p "$current_dir/../$GAME_SERVER_IMAGE_NAME"
+    # Copy files from template directory and replace variables, including `.` files
+    cp -r "$current_dir/template/"* "$current_dir/../$GAME_SERVER_IMAGE_NAME"
+    cp -r "$current_dir/template/."* "$current_dir/../$GAME_SERVER_IMAGE_NAME"
+    replace_placeholders
+}
+
 function main() {
     tools_check
     define_variables
-    create_server_image_directory
+    if [ -z "$update_dir" ]; then
+        create_server_image_directory
+    else
+        update_existing_server_image_directory
+    fi
 }
 
 main "$@"
